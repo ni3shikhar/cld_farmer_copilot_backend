@@ -60,18 +60,20 @@ def analyze(input: UserInput):
 
         lat = geo_response[0]["lat"]
         lon = geo_response[0]["lon"]
-
+        print("Latitude:", lat, "Longitude:", lon)
         # === Step 2: Get 7-day weather forecast ===
         weather_url = (
             f"https://api.openweathermap.org/data/2.5/onecall"
             f"?lat={lat}&lon={lon}&exclude=current,minutely,hourly,alerts"
             f"&appid={OPENWEATHER_API_KEY}&units=metric"
         )
+        print("Weather API URL:", weather_url)
         weather_response = requests.get(weather_url).json()
+        print("Weather API response:", weather_response)
         daily_forecast = weather_response.get("daily", [])
 
         if not daily_forecast:
-            return {"error": "Failed to fetch weather forecast."}
+            return {"error": "Failed to fetch weather forecast.", "raw": weather_response}
 
         # === Step 3: Basic Risk Detection Rules ===
         detected_risks = []
