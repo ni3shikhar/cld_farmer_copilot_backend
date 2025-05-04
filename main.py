@@ -63,7 +63,7 @@ def analyze(input: UserInput):
         print("Latitude:", lat, "Longitude:", lon)
         # === Step 2: Get 7-day weather forecast ===
         weather_url = (
-            f"https://api.openweathermap.org/data/2.5/onecall"
+            f"https://api.openweathermap.org/data/3.0/onecall"
             f"?lat={lat}&lon={lon}&exclude=current,minutely,hourly,alerts"
             f"&appid={OPENWEATHER_API_KEY}&units=metric"
         )
