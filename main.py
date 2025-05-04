@@ -1,11 +1,26 @@
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
+from azure.identity import DefaultAzureCredential
+from azure.keyvault.secrets import SecretClient
+
+import os
 import requests
 
 app = FastAPI()
 
+# Key Vault URL (replace with your actual Key Vault name)
+KEY_VAULT_URL = "https://kv-cld-farmer-poc.vault.azure.net/"
+
+# Use default credential (works for Azure App Service or local via `az login`)
+credential = DefaultAzureCredential()
+client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
+
+# Fetch the secret
+retrieved_secret = client.get_secret("OpenWeatherAPIKey")
+OPENWEATHER_API_KEY = retrieved_secret.value
+
 # Replace with your actual API key
-OPENWEATHER_API_KEY = "your_openweathermap_api_key_here"
+#OPENWEATHER_API_KEY = "99e6a7cc36fdd82d597fe353e74771f1"
 
 # === Request & Response Schemas ===
 
