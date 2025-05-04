@@ -34,6 +34,7 @@ def read_root():
 
 @app.post("/analyze")
 def analyze(input: UserInput):
+    print("Received input:", input)
     # === Step 1: Convert PIN to lat/lon (via LocationIQ, Azure Maps, or similar) ===
     geo_url = f"https://nominatim.openstreetmap.org/search?postalcode={input.pin_code}&country=India&format=json"
     geo_response = requests.get(geo_url).json()
