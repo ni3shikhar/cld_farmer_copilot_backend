@@ -28,6 +28,10 @@ class UserInput(BaseModel):
     pin_code: str
     crop_name: str
 
+@app.get("/")
+def read_root():
+    return {"message": "Farmer Copilot API running"}
+
 @app.post("/analyze")
 def analyze(input: UserInput):
     # === Step 1: Convert PIN to lat/lon (via LocationIQ, Azure Maps, or similar) ===
