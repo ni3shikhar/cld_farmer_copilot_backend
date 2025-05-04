@@ -9,18 +9,18 @@ import requests
 app = FastAPI()
 
 # Key Vault URL (replace with your actual Key Vault name)
-KEY_VAULT_URL = "https://kv-cld-farmer-poc.vault.azure.net/"
+#KEY_VAULT_URL = "https://kv-cld-farmer-poc.vault.azure.net/"
 
 # Use default credential (works for Azure App Service or local via `az login`)
-credential = DefaultAzureCredential()
-client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
+#credential = DefaultAzureCredential()
+#client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
 
 # Fetch the secret
-retrieved_secret = client.get_secret("OpenWeatherAPIKey")
-OPENWEATHER_API_KEY = retrieved_secret.value
+#retrieved_secret = client.get_secret("OpenWeatherAPIKey")
+#OPENWEATHER_API_KEY = retrieved_secret.value
 
 # Replace with your actual API key
-#OPENWEATHER_API_KEY = "99e6a7cc36fdd82d597fe353e74771f1"
+OPENWEATHER_API_KEY = "99e6a7cc36fdd82d597fe353e74771f1"
 
 # === Request & Response Schemas ===
 
@@ -36,7 +36,8 @@ def read_root():
 def analyze(input: UserInput):
     print("Received input:", input)
     # === Step 1: Convert PIN to lat/lon (via LocationIQ, Azure Maps, or similar) ===
-    geo_url = f"https://nominatim.openstreetmap.org/search?postalcode={input.pin_code}&country=India&format=json"
+    #geo_url = f"https://nominatim.openstreetmap.org/search?postalcode={input.pin_code}&country=India&format=json"
+    geo_url = f"https://nominatim.openstreetmap.org/search?postalcode=411038&country=India&format=json"
     geo_response = requests.get(geo_url).json()
 
     if not geo_response:
