@@ -30,6 +30,37 @@ WEATHER_API_KEY = retrieved_secret.value
 # Replace with your actual API key
 #OPENWEATHER_API_KEY = "99e6a7cc36fdd82d597fe353e74771f1"
 
+# === Crop Risk Profiles ===
+CROP_RISK_PROFILES = {
+    "rice": {
+        "min_rain_mm": 5,
+        "max_temp_c": 38,
+        "min_temp_c": 20,
+        "max_wind_kmph": 40,
+        "max_humidity": 90
+    },
+    "wheat": {
+        "min_rain_mm": 2,
+        "max_temp_c": 32,
+        "min_temp_c": 10,
+        "max_wind_kmph": 35,
+        "max_humidity": 85
+    },
+    "maize": {
+        "min_rain_mm": 3,
+        "max_temp_c": 35,
+        "min_temp_c": 18,
+        "max_wind_kmph": 45,
+        "max_humidity": 88
+    },
+    "sugarcane": {
+        "min_rain_mm": 4,
+        "max_temp_c": 40,
+        "min_temp_c": 15,
+        "max_wind_kmph": 50,
+        "max_humidity": 92
+    }
+}
 # === Request & Response Schemas ===
 
 class UserInput(BaseModel):
@@ -43,56 +74,69 @@ def read_root():
 @app.post("/analyze")
 def analyze(input: UserInput):
     try:
-        # === Step 1: Get weather forecast using PIN code ===
-        headers = {
-            "User-Agent": "FarmerCopilotApp/1.0 (nitinshikhare@gmail.com)"
-        }
+        # --- Step 1: PIN → lat/lon ---
         geo_url = f"https://nominatim.openstreetmap.org/search?postalcode={input.pin_code}&country=India&format=json"
-        geo_result = requests.get(geo_url, headers=headers)
+        headers = {"User-Agent": "FarmerCopilotApp/1.0 (your@email.com)"}
+        geo_response = requests.get(geo_url, headers=headers).json()
 
-        if geo_result.status_code != 200 or not geo_result.json():
-            return {"error": "Geolocation lookup failed."}
+        if not geo_response:
+            return JSONResponse(status_code=400, content={"error": "Invalid PIN code or location not found."})
 
-        lat = geo_result.json()[0]["lat"]
-        lon = geo_result.json()[0]["lon"]
+        lat = geo_response[0]["lat"]
+        lon = geo_response[0]["lon"]
 
-        url = f"https://api.weatherapi.com/v1/forecast.json?key={WEATHER_API_KEY}&q={lat},{lon}&days=7"
+        # --- Step 2: Weather forecast from WeatherAPI ---
+        weather_url = f"https://api.weatherapi.com/v1/forecast.json?key={WEATHER_API_KEY}&q={lat},{lon}&days=7"
+        weather_response = requests.get(weather_url).json()
+        forecast_days = weather_response.get("forecast", {}).get("forecastday", [])
 
-        response = requests.get(url)
-        if response.status_code != 200:
-            return JSONResponse(status_code=502, content={"error": "WeatherAPI.com request failed", "details": response.text})
-
-        data = response.json()
-
-        forecast_days = data.get("forecast", {}).get("forecastday", [])
         if not forecast_days:
-            return {"error": "No forecast data returned."}
+            return JSONResponse(status_code=502, content={"error": "Failed to fetch weather forecast."})
 
-        # === Step 2: Run risk detection rules ===
+        # --- Step 3: Apply Crop Risk Rules ---
+        profile = CROP_RISK_PROFILES.get(input.crop_name.lower())
+        if not profile:
+            return JSONResponse(status_code=400, content={"error": f"Crop '{input.crop_name}' is not supported."})
+
         detected_risks = []
         recommendations = []
 
-        if input.crop_name.lower() == "rice":
-            for day in forecast_days:
-                date = day["date"]
-                day_data = day["day"]
-                rain_mm = day_data["totalprecip_mm"]
-                temp_max = day_data["maxtemp_c"]
+        for day in forecast_days:
+            date = day["date"]
+            weather = day["day"]
+            rain = weather.get("totalprecip_mm", 0)
+            temp_max = weather.get("maxtemp_c", 0)
+            temp_min = weather.get("mintemp_c", 0)
+            wind = weather.get("maxwind_kph", 0)
+            humidity = weather.get("avghumidity", 0)
 
-                if rain_mm < 5:
-                    detected_risks.append(f"Drought Risk on {date}")
-                    recommendations.append("Apply irrigation to avoid water stress.")
-                if temp_max > 38:
-                    detected_risks.append(f"Heat Stress Risk on {date}")
-                    recommendations.append("Provide shade or increase water supply.")
+            if rain < profile["min_rain_mm"]:
+                detected_risks.append(f"Drought risk on {date}")
+                recommendations.append("Irrigate or delay sowing.")
 
-        # === Step 3: Generate summary for Day 1 ===
-        today = forecast_days[0]["day"]
-        summary = f"{forecast_days[0]['date']}: {today['condition']['text']}, Max Temp: {today['maxtemp_c']}°C"
+            if temp_max > profile["max_temp_c"]:
+                detected_risks.append(f"Heat stress on {date}")
+                recommendations.append("Provide shade or increase watering.")
+
+            if temp_min < profile["min_temp_c"]:
+                detected_risks.append(f"Frost/cold risk on {date}")
+                recommendations.append("Protect young plants from cold.")
+
+            if wind > profile["max_wind_kmph"]:
+                detected_risks.append(f"Wind damage risk on {date}")
+                recommendations.append("Support tall crops or shelter from wind.")
+
+            if humidity > profile["max_humidity"]:
+                detected_risks.append(f"High humidity disease risk on {date}")
+                recommendations.append("Inspect crops for fungal infection.")
+
+        # --- Step 4: Forecast Summary ---
+        today = forecast_days[0]
+        summary = f"{today['date']}: {today['day']['condition']['text']}, Max Temp: {today['day']['maxtemp_c']}°C"
 
         return {
-            "location": data["location"]["name"],
-            "region": data["location"]["region"],
+            "location": weather_response["location"]["name"],
+            "region": weather_response["location"]["region"],
             "crop": input.crop_name,
             "forecast_summary": summary,
             "detected_risks": list(set(detected_risks)),
