@@ -74,9 +74,9 @@ def read_root():
 @app.post("/analyze")
 def analyze(input: UserInput):
     try:
-        # --- Step 1: PIN → lat/lon ---
+        # Step 1: Get lat/lon from PIN
         geo_url = f"https://nominatim.openstreetmap.org/search?postalcode={input.pin_code}&country=India&format=json"
-        headers = {"User-Agent": "FarmerCopilotApp/1.0 (your@email.com)"}
+        headers = {"User-Agent": "FarmerCopilotApp/1.0"}
         geo_response = requests.get(geo_url, headers=headers).json()
 
         if not geo_response:
@@ -85,7 +85,7 @@ def analyze(input: UserInput):
         lat = geo_response[0]["lat"]
         lon = geo_response[0]["lon"]
 
-        # --- Step 2: Weather forecast from WeatherAPI ---
+        # Step 2: Get 7-day forecast from WeatherAPI
         weather_url = f"https://api.weatherapi.com/v1/forecast.json?key={WEATHER_API_KEY}&q={lat},{lon}&days=7"
         weather_response = requests.get(weather_url).json()
         forecast_days = weather_response.get("forecast", {}).get("forecastday", [])
@@ -93,7 +93,6 @@ def analyze(input: UserInput):
         if not forecast_days:
             return JSONResponse(status_code=502, content={"error": "Failed to fetch weather forecast."})
 
-        # --- Step 3: Apply Crop Risk Rules ---
         profile = CROP_RISK_PROFILES.get(input.crop_name.lower())
         if not profile:
             return JSONResponse(status_code=400, content={"error": f"Crop '{input.crop_name}' is not supported."})
@@ -101,36 +100,48 @@ def analyze(input: UserInput):
         detected_risks = []
         recommendations = []
 
+        # Step 3: Risk Detection Logic
         for day in forecast_days:
             date = day["date"]
             weather = day["day"]
+
             rain = weather.get("totalprecip_mm", 0)
             temp_max = weather.get("maxtemp_c", 0)
             temp_min = weather.get("mintemp_c", 0)
             wind = weather.get("maxwind_kph", 0)
             humidity = weather.get("avghumidity", 0)
 
+            # Drought
             if rain < profile["min_rain_mm"]:
                 detected_risks.append(f"Drought risk on {date}")
                 recommendations.append("Irrigate or delay sowing.")
 
+            # Flood
+            if rain > 80:
+                detected_risks.append(f"Flood risk on {date}")
+                recommendations.append("Ensure drainage. Avoid fertilizer application.")
+
+            # Heat stress
             if temp_max > profile["max_temp_c"]:
                 detected_risks.append(f"Heat stress on {date}")
-                recommendations.append("Provide shade or increase watering.")
+                recommendations.append("Provide shade or irrigate during cooler hours.")
 
+            # Cold/frost
             if temp_min < profile["min_temp_c"]:
-                detected_risks.append(f"Frost/cold risk on {date}")
-                recommendations.append("Protect young plants from cold.")
+                detected_risks.append(f"Cold/frost risk on {date}")
+                recommendations.append("Use mulch or protective covers for seedlings.")
 
+            # Wind
             if wind > profile["max_wind_kmph"]:
                 detected_risks.append(f"Wind damage risk on {date}")
-                recommendations.append("Support tall crops or shelter from wind.")
+                recommendations.append("Stake tall crops or add windbreaks.")
 
-            if humidity > profile["max_humidity"]:
-                detected_risks.append(f"High humidity disease risk on {date}")
-                recommendations.append("Inspect crops for fungal infection.")
+            # Pest/disease (humidity + heat)
+            if humidity > profile["max_humidity"] and temp_max > 30:
+                detected_risks.append(f"Pest/disease risk on {date}")
+                recommendations.append("Inspect for pests/fungi. Avoid late irrigation.")
 
-        # --- Step 4: Forecast Summary ---
+        # Step 4: Forecast summary
         today = forecast_days[0]
         summary = f"{today['date']}: {today['day']['condition']['text']}, Max Temp: {today['day']['maxtemp_c']}°C"
 
