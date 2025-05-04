@@ -18,7 +18,7 @@ client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
 
 # Fetch the secret
 retrieved_secret = client.get_secret("OpenWeatherAPIKey")
-OPENWEATHER_API_KEY = retrieved_secret.value
+WEATHER_API_KEY = retrieved_secret.value
 
 # Replace with your actual API key
 #OPENWEATHER_API_KEY = "99e6a7cc36fdd82d597fe353e74771f1"
@@ -36,69 +36,49 @@ def read_root():
 @app.post("/analyze")
 def analyze(input: UserInput):
     try:
-        print("Received input:", input)
-        # === Step 1: Convert PIN to lat/lon (via LocationIQ, Azure Maps, or similar) ===
-        #geo_url = f"https://nominatim.openstreetmap.org/search?postalcode={input.pin_code}&country=India&format=json"
-        headers = {
-            "User-Agent": "FarmerCopilot/1.0 (nitinshikhare@gmail.com)"
-        }
-        geo_url = f"https://nominatim.openstreetmap.org/search?postalcode={input.pin_code}&country=India&format=json"
+        # === Step 1: Get weather forecast using PIN code ===
+        url = f"https://api.weatherapi.com/v1/forecast.json?key={WEATHER_API_KEY}&q={input.pin_code}&days=7"
 
-        geo_result = requests.get(geo_url, headers=headers)
+        response = requests.get(url)
+        if response.status_code != 200:
+            return JSONResponse(status_code=502, content={"error": "WeatherAPI.com request failed", "details": response.text})
 
-        if geo_result.status_code != 200:
-            print("Geocoding failed:", geo_result.status_code, geo_result.text)
-            return {"error": "Geocoding service failed."}
+        data = response.json()
 
-        try:
-            geo_response = geo_result.json()
-        except Exception as e:
-            return {"error": "Invalid JSON from geolocation service", "detail": str(e)}
+        forecast_days = data.get("forecast", {}).get("forecastday", [])
+        if not forecast_days:
+            return {"error": "No forecast data returned."}
 
-        if not geo_response:
-            return {"error": "No location found for given PIN code."}
-
-        lat = geo_response[0]["lat"]
-        lon = geo_response[0]["lon"]
-        print("Latitude:", lat, "Longitude:", lon)
-        # === Step 2: Get 7-day weather forecast ===
-        weather_url = (
-            f"https://api.openweathermap.org/data/3.0/onecall"
-            f"?lat={lat}&lon={lon}&exclude=current,minutely,hourly,alerts"
-            f"&appid={OPENWEATHER_API_KEY}&units=metric"
-        )
-        print("Weather API URL:", weather_url)
-        weather_response = requests.get(weather_url).json()
-        print("Weather API response:", weather_response)
-        daily_forecast = weather_response.get("daily", [])
-
-        if not daily_forecast:
-            return {"error": "Failed to fetch weather forecast.", "raw": weather_response}
-
-        # === Step 3: Basic Risk Detection Rules ===
+        # === Step 2: Run risk detection rules ===
         detected_risks = []
         recommendations = []
 
         if input.crop_name.lower() == "rice":
-            for day in daily_forecast[:7]:
-                rain = day.get("rain", 0)
-                temp_max = day["temp"]["max"]
-                if rain < 5:
-                    detected_risks.append("Drought Risk")
+            for day in forecast_days:
+                date = day["date"]
+                day_data = day["day"]
+                rain_mm = day_data["totalprecip_mm"]
+                temp_max = day_data["maxtemp_c"]
+
+                if rain_mm < 5:
+                    detected_risks.append(f"Drought Risk on {date}")
                     recommendations.append("Apply irrigation to avoid water stress.")
                 if temp_max > 38:
-                    detected_risks.append("Heat Stress Risk")
+                    detected_risks.append(f"Heat Stress Risk on {date}")
                     recommendations.append("Provide shade or increase water supply.")
 
-        summary = f"{daily_forecast[0]['weather'][0]['description'].capitalize()}, Max Temp: {daily_forecast[0]['temp']['max']}°C"
+        # === Step 3: Generate summary for Day 1 ===
+        today = forecast_days[0]["day"]
+        summary = f"{forecast_days[0]['date']}: {today['condition']['text']}, Max Temp: {today['maxtemp_c']}°C"
 
         return {
-            "location": f"{input.pin_code} (India)",
+            "location": data["location"]["name"],
+            "region": data["location"]["region"],
             "crop": input.crop_name,
             "forecast_summary": summary,
-            "detected_risks": list(set(detected_risks)),  # remove duplicates
-            "recommendations": list(set(recommendations)),
+            "detected_risks": list(set(detected_risks)),
+            "recommendations": list(set(recommendations))
         }
+
     except Exception as e:
-            print("Error:", e)
-            return JSONResponse(status_code=500, content={"error": "Internal Server Error", "detail": str(e)})
+        return JSONResponse(status_code=500, content={"error": "Internal Server Error", "detail": str(e)})
