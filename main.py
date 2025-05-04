@@ -3,11 +3,18 @@ from pydantic import BaseModel
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 import os
 import requests
 
 app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # or replace "*" with your static web app URL
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Key Vault URL (replace with your actual Key Vault name)
 KEY_VAULT_URL = "https://kv-cld-farmer-poc.vault.azure.net/"
