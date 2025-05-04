@@ -37,7 +37,19 @@ def read_root():
 def analyze(input: UserInput):
     try:
         # === Step 1: Get weather forecast using PIN code ===
-        url = f"https://api.weatherapi.com/v1/forecast.json?key={WEATHER_API_KEY}&q={input.pin_code}&days=7"
+        headers = {
+            "User-Agent": "FarmerCopilotApp/1.0 (nitinshikhare@gmail.com)"
+        }
+        geo_url = f"https://nominatim.openstreetmap.org/search?postalcode={input.pin_code}&country=India&format=json"
+        geo_result = requests.get(geo_url, headers=headers)
+
+        if geo_result.status_code != 200 or not geo_result.json():
+            return {"error": "Geolocation lookup failed."}
+
+        lat = geo_result.json()[0]["lat"]
+        lon = geo_result.json()[0]["lon"]
+
+        url = f"https://api.weatherapi.com/v1/forecast.json?key={WEATHER_API_KEY}&q={lat},{lon}&days=7"
 
         response = requests.get(url)
         if response.status_code != 200:
