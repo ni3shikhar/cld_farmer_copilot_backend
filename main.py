@@ -40,6 +40,18 @@ def analyze(input: UserInput):
         # === Step 1: Convert PIN to lat/lon (via LocationIQ, Azure Maps, or similar) ===
         #geo_url = f"https://nominatim.openstreetmap.org/search?postalcode={input.pin_code}&country=India&format=json"
         geo_url = f"https://nominatim.openstreetmap.org/search?postalcode=411038&country=India&format=json"
+        geo_result = requests.get(geo_url)
+
+        if geo_result.status_code != 200:
+            print("Geocoding API failed:", geo_result.status_code, geo_result.text)
+            return {"error": "Geocoding service failed."}
+
+        try:
+            geo_response = geo_result.json()
+        except Exception as e:
+            print("Error parsing geocoding response:", geo_result.text)
+            return {"error": "Invalid response from geolocation service."}
+
         geo_response = requests.get(geo_url).json()
 
         if not geo_response:
