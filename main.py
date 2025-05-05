@@ -61,6 +61,17 @@ CROP_RISK_PROFILES = {
         "max_humidity": 92
     }
 }
+
+# === RECOMMENDATION MAPPINGS ===
+RISK_RECOMMENDATIONS = {
+    "drought": "Irrigate early morning or late evening to reduce evaporation.",
+    "flood": "Ensure proper drainage; avoid nitrogen fertilizer applications.",
+    "heat": "Provide temporary shading; irrigate during cooler hours.",
+    "cold": "Use mulch or crop covers to protect from low temperatures.",
+    "wind": "Support tall crops like sugarcane; install wind barriers.",
+    "humidity": "Inspect crops for fungal symptoms; apply fungicide if needed."
+}
+
 # === Request & Response Schemas ===
 
 class UserInput(BaseModel):
@@ -74,7 +85,7 @@ def read_root():
 @app.post("/analyze")
 def analyze(input: UserInput):
     try:
-        # Step 1: Get lat/lon from PIN
+        # Step 1: Convert PIN to lat/lon using Nominatim
         geo_url = f"https://nominatim.openstreetmap.org/search?postalcode={input.pin_code}&country=India&format=json"
         headers = {"User-Agent": "FarmerCopilotApp/1.0"}
         geo_response = requests.get(geo_url, headers=headers).json()
@@ -93,6 +104,7 @@ def analyze(input: UserInput):
         if not forecast_days:
             return JSONResponse(status_code=502, content={"error": "Failed to fetch weather forecast."})
 
+        # Step 3: Load crop profile
         profile = CROP_RISK_PROFILES.get(input.crop_name.lower())
         if not profile:
             return JSONResponse(status_code=400, content={"error": f"Crop '{input.crop_name}' is not supported."})
@@ -100,7 +112,7 @@ def analyze(input: UserInput):
         detected_risks = []
         recommendations = []
 
-        # Step 3: Risk Detection Logic
+        # Step 4: Analyze each forecast day
         for day in forecast_days:
             date = day["date"]
             weather = day["day"]
@@ -114,34 +126,34 @@ def analyze(input: UserInput):
             # Drought
             if rain < profile["min_rain_mm"]:
                 detected_risks.append(f"Drought risk on {date}")
-                recommendations.append("Irrigate or delay sowing.")
+                recommendations.append(RISK_RECOMMENDATIONS["drought"])
 
             # Flood
             if rain > 80:
                 detected_risks.append(f"Flood risk on {date}")
-                recommendations.append("Ensure drainage. Avoid fertilizer application.")
+                recommendations.append(RISK_RECOMMENDATIONS["flood"])
 
             # Heat stress
             if temp_max > profile["max_temp_c"]:
                 detected_risks.append(f"Heat stress on {date}")
-                recommendations.append("Provide shade or irrigate during cooler hours.")
+                recommendations.append(RISK_RECOMMENDATIONS["heat"])
 
             # Cold/frost
             if temp_min < profile["min_temp_c"]:
                 detected_risks.append(f"Cold/frost risk on {date}")
-                recommendations.append("Use mulch or protective covers for seedlings.")
+                recommendations.append(RISK_RECOMMENDATIONS["cold"])
 
             # Wind
             if wind > profile["max_wind_kmph"]:
                 detected_risks.append(f"Wind damage risk on {date}")
-                recommendations.append("Stake tall crops or add windbreaks.")
+                recommendations.append(RISK_RECOMMENDATIONS["wind"])
 
-            # Pest/disease (humidity + heat)
+            # Pest/Disease
             if humidity > profile["max_humidity"] and temp_max > 30:
                 detected_risks.append(f"Pest/disease risk on {date}")
-                recommendations.append("Inspect for pests/fungi. Avoid late irrigation.")
+                recommendations.append(RISK_RECOMMENDATIONS["humidity"])
 
-        # Step 4: Forecast summary
+        # Step 5: Forecast summary for today
         today = forecast_days[0]
         summary = f"{today['date']}: {today['day']['condition']['text']}, Max Temp: {today['day']['maxtemp_c']}°C"
 
