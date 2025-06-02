@@ -7,6 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import os
 import requests
+from azure.monitor.opentelemetry.exporter import AzureMonitorTraceExporter
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 app = FastAPI()
 app.add_middleware(
@@ -87,121 +91,132 @@ def read_root():
 
 @app.post("/analyze")
 def analyze(input: UserInput):
+    # Set up Application Insights tracing
+    retrieved_insights_secret = client.get_secret("ApplicationInsightsConnectionString")
+    os.environ["APPLICATION_INSIGHTS_CONNECTION_STRING"] = retrieved_insights_secret.value
+    exporter = AzureMonitorTraceExporter(connection_string=os.getenv("APPLICATION_INSIGHTS_CONNECTION_STRING"))
+    provider = TracerProvider()
+    processor = BatchSpanProcessor(exporter)
+    provider.add_span_processor(processor)
+    trace.set_tracer_provider(provider)
+    tracer = trace.get_tracer(__name__)
+
     try:
-        # Step 1: Convert PIN to lat/lon using Nominatim
-        geo_url = f"https://nominatim.openstreetmap.org/search?postalcode={input.pin_code}&country=India&format=json"
-        headers = {"User-Agent": "FarmerCopilotApp/1.0"}
-        geo_response = requests.get(geo_url, headers=headers).json()
+        with tracer.start_as_current_span("analyze_weather_risks"):
+            # Step 1: Convert PIN to lat/lon using Nominatim
+            geo_url = f"https://nominatim.openstreetmap.org/search?postalcode={input.pin_code}&country=India&format=json"
+            headers = {"User-Agent": "FarmerCopilotApp/1.0"}
+            geo_response = requests.get(geo_url, headers=headers).json()
 
-        if not geo_response:
-            return JSONResponse(status_code=400, content={"error": "Invalid PIN code or location not found."})
+            if not geo_response:
+                return JSONResponse(status_code=400, content={"error": "Invalid PIN code or location not found."})
 
-        lat = geo_response[0]["lat"]
-        lon = geo_response[0]["lon"]
+            lat = geo_response[0]["lat"]
+            lon = geo_response[0]["lon"]
 
-        # Step 2: Get 7-day forecast from WeatherAPI
-        weather_url = f"https://api.weatherapi.com/v1/forecast.json?key={WEATHER_API_KEY}&q={lat},{lon}&days=7"
-        weather_response = requests.get(weather_url).json()
-        forecast_days = weather_response.get("forecast", {}).get("forecastday", [])
+            # Step 2: Get 7-day forecast from WeatherAPI
+            weather_url = f"https://api.weatherapi.com/v1/forecast.json?key={WEATHER_API_KEY}&q={lat},{lon}&days=7"
+            weather_response = requests.get(weather_url).json()
+            forecast_days = weather_response.get("forecast", {}).get("forecastday", [])
 
-        if not forecast_days:
-            return JSONResponse(status_code=502, content={"error": "Failed to fetch weather forecast."})
+            if not forecast_days:
+                return JSONResponse(status_code=502, content={"error": "Failed to fetch weather forecast."})
 
-        # Step 3: Load crop profile
-        profile = CROP_RISK_PROFILES.get(input.crop_name.lower())
-        if not profile:
-            return JSONResponse(status_code=400, content={"error": f"Crop '{input.crop_name}' is not supported."})
+            # Step 3: Load crop profile
+            profile = CROP_RISK_PROFILES.get(input.crop_name.lower())
+            if not profile:
+                return JSONResponse(status_code=400, content={"error": f"Crop '{input.crop_name}' is not supported."})
 
-        detected_risks = []
-        recommendations = []
+            detected_risks = []
+            recommendations = []
 
-        # Step 4: Analyze each forecast day
-        for day in forecast_days:
-            date = day["date"]
-            weather = day["day"]
+            # Step 4: Analyze each forecast day
+            for day in forecast_days:
+                date = day["date"]
+                weather = day["day"]
 
-            rain = weather.get("totalprecip_mm", 0)
-            temp_max = weather.get("maxtemp_c", 0)
-            temp_min = weather.get("mintemp_c", 0)
-            wind = weather.get("maxwind_kph", 0)
-            humidity = weather.get("avghumidity", 0)
+                rain = weather.get("totalprecip_mm", 0)
+                temp_max = weather.get("maxtemp_c", 0)
+                temp_min = weather.get("mintemp_c", 0)
+                wind = weather.get("maxwind_kph", 0)
+                humidity = weather.get("avghumidity", 0)
 
-            # Drought
-            if rain < profile["min_rain_mm"]:
-                detected_risks.append(f"Drought risk on {date}")
-                #recommendations.append(RISK_RECOMMENDATIONS["drought"])
+                # Drought
+                if rain < profile["min_rain_mm"]:
+                    detected_risks.append(f"Drought risk on {date}")
+                    endpoint = "https://chat-with-db.openai.azure.com/"
+                    model_name = "gpt-4.1" 
+                    deployment = "gpt-4.1"
 
-                endpoint = "https://chat-with-db.openai.azure.com/"
-                model_name = "gpt-4.1" 
-                deployment = "gpt-4.1"
+                    subscription_key = OPENAI_SUB_API_KEY
+                    api_version = "2024-12-01-preview"
 
-                subscription_key = OPENAI_SUB_API_KEY
-                api_version = "2024-12-01-preview"
+                    client = AzureOpenAI(
+                        api_version=api_version,
+                        azure_endpoint=endpoint,
+                        api_key=subscription_key,
+                    )
 
-                client = AzureOpenAI(
-                    api_version=api_version,
-                    azure_endpoint=endpoint,
-                    api_key=subscription_key,
-                )
+                    response = client.chat.completions.create(
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "You are a farmer and weather assistant.",
+                            },
+                            {
+                                "role": "user",
+                                "content": f"Given the pin code {input.pin_code} and crop name {input.crop_name}, provide risk recommendations based on weather conditions such as drought, flood, heat, cold, wind, and humidity."
+                            }
+                        ],
+                        max_completion_tokens=800,
+                        temperature=1.0,
+                        top_p=1.0,
+                        frequency_penalty=0.0,
+                        presence_penalty=0.0,
+                        model=deployment
+                    )
+                    recommendations.append(response.choices[0].message.content)
 
-                response = client.chat.completions.create(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a farmer and weather assistant.",
-                    },
-                    {
-                        "role": "user",
-                            "content": f"Given the pin code {input.pin_code} and crop name {input.crop_name}, provide risk recommendations based on weather conditions such as drought, flood, heat, cold, wind, and humidity."
-                    }
-                ],
-                max_completion_tokens=800,
-                temperature=1.0,
-                top_p=1.0,
-                frequency_penalty=0.0,
-                presence_penalty=0.0,
-                model=deployment
-            )
-            recommendations.append(response.choices[0].message.content)
-            #print(response.choices[0].message.content)
+                # Flood
+                if rain > 80:
+                    detected_risks.append(f"Flood risk on {date}")
+                    recommendations.append(RISK_RECOMMENDATIONS["flood"])
 
-            # Flood
-            if rain > 80:
-                detected_risks.append(f"Flood risk on {date}")
-                recommendations.append(RISK_RECOMMENDATIONS["flood"])
+                # Heat stress
+                if temp_max > profile["max_temp_c"]:
+                    detected_risks.append(f"Heat stress on {date}")
+                    recommendations.append(RISK_RECOMMENDATIONS["heat"])
 
-            # Heat stress
-            if temp_max > profile["max_temp_c"]:
-                detected_risks.append(f"Heat stress on {date}")
-                recommendations.append(RISK_RECOMMENDATIONS["heat"])
+                # Cold/frost
+                if temp_min < profile["min_temp_c"]:
+                    detected_risks.append(f"Cold/frost risk on {date}")
+                    recommendations.append(RISK_RECOMMENDATIONS["cold"])
 
-            # Cold/frost
-            if temp_min < profile["min_temp_c"]:
-                detected_risks.append(f"Cold/frost risk on {date}")
-                recommendations.append(RISK_RECOMMENDATIONS["cold"])
+                # Wind
+                if wind > profile["max_wind_kmph"]:
+                    detected_risks.append(f"Wind damage risk on {date}")
+                    recommendations.append(RISK_RECOMMENDATIONS["wind"])
 
-            # Wind
-            if wind > profile["max_wind_kmph"]:
-                detected_risks.append(f"Wind damage risk on {date}")
-                recommendations.append(RISK_RECOMMENDATIONS["wind"])
+                # Pest/Disease
+                if humidity > profile["max_humidity"] and temp_max > 30:
+                    detected_risks.append(f"Pest/disease risk on {date}")
+                    recommendations.append(RISK_RECOMMENDATIONS["humidity"])
 
-            # Pest/Disease
-            if humidity > profile["max_humidity"] and temp_max > 30:
-                detected_risks.append(f"Pest/disease risk on {date}")
-                recommendations.append(RISK_RECOMMENDATIONS["humidity"])
+            # Step 5: Forecast summary for today
+            today = forecast_days[0]
+            summary = f"{today['date']}: {today['day']['condition']['text']}, Max Temp: {today['day']['maxtemp_c']}°C"
 
-        # Step 5: Forecast summary for today
-        today = forecast_days[0]
-        summary = f"{today['date']}: {today['day']['condition']['text']}, Max Temp: {today['day']['maxtemp_c']}°C"
-
-        return {
-            "location": weather_response["location"]["name"],
-            "region": weather_response["location"]["region"],
-            "crop": input.crop_name,
-            "forecast_summary": summary,
-            "detected_risks": list(set(detected_risks)),
-            "recommendations": list(set(recommendations))
-        }
+            return {
+                "location": weather_response["location"]["name"],
+                "region": weather_response["location"]["region"],
+                "crop": input.crop_name,
+                "forecast_summary": summary,
+                "detected_risks": list(set(detected_risks)),
+                "recommendations": list(set(recommendations))
+            }
 
     except Exception as e:
+        with tracer.start_as_current_span("exception_handling"):
+            trace.get_current_span().record_exception(e)
+            trace.get_current_span().set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
         return JSONResponse(status_code=500, content={"error": "Internal Server Error", "detail": str(e)})
