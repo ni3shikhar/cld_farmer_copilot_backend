@@ -4,75 +4,51 @@ from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-
-import os
-import requests
 from azure.monitor.opentelemetry.exporter import AzureMonitorTraceExporter
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
+import os
+import requests
+
+# Ensure AzureOpenAI is imported properly
+from openai import AzureOpenAI  # adjust this import if you're using a specific SDK
+
+# Set environment variable early for Application Insights
+KEY_VAULT_URL = "https://kv-cld-farmer-poc.vault.azure.net/"
+credential = DefaultAzureCredential()
+client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
+
+WEATHER_API_KEY = client.get_secret("OpenWeatherAPIKey").value
+OPENAI_SUB_API_KEY = client.get_secret("OpenSubscriptionKey").value
+APP_INSIGHTS_KEY = client.get_secret("ApplicationInsightsConnectionString").value
+os.environ["APPLICATION_INSIGHTS_CONNECTION_STRING"] = APP_INSIGHTS_KEY
+
+# CORS middleware
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # or replace "*" with your static web app URL
+    allow_origins=["*"],  # Replace "*" with your frontend domain in production
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Key Vault URL (replace with your actual Key Vault name)
-KEY_VAULT_URL = "https://kv-cld-farmer-poc.vault.azure.net/"
+# Application Insights setup
+exporter = AzureMonitorTraceExporter(connection_string=os.getenv("APPLICATION_INSIGHTS_CONNECTION_STRING"))
+provider = TracerProvider()
+processor = BatchSpanProcessor(exporter)
+provider.add_span_processor(processor)
+trace.set_tracer_provider(provider)
+tracer = trace.get_tracer(__name__)
 
-# Use default credential (works for Azure App Service or local via `az login`)
-credential = DefaultAzureCredential()
-client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
-
-# Fetch the secret
-retrieved_secret = client.get_secret("OpenWeatherAPIKey")
-WEATHER_API_KEY = retrieved_secret.value
-
-retrieved_openai_secret = client.get_secret("OpenSubscriptionKey")
-OPENAI_SUB_API_KEY = retrieved_openai_secret.value
-
-retrieved_insights_secret = client.get_secret("ApplicationInsightsConnectionString")
-APP_INSIGHTS_KEY = retrieved_insights_secret.vaue
-
-# Replace with your actual API key
-#OPENWEATHER_API_KEY = "99e6a7cc36fdd82d597fe353e74771f1"
-
-# === Crop Risk Profiles ===
+# Risk profiles and mappings (same as before)
 CROP_RISK_PROFILES = {
-    "rice": {
-        "min_rain_mm": 5,
-        "max_temp_c": 38,
-        "min_temp_c": 20,
-        "max_wind_kmph": 40,
-        "max_humidity": 90
-    },
-    "wheat": {
-        "min_rain_mm": 2,
-        "max_temp_c": 32,
-        "min_temp_c": 10,
-        "max_wind_kmph": 35,
-        "max_humidity": 85
-    },
-    "maize": {
-        "min_rain_mm": 3,
-        "max_temp_c": 35,
-        "min_temp_c": 18,
-        "max_wind_kmph": 45,
-        "max_humidity": 88
-    },
-    "sugarcane": {
-        "min_rain_mm": 4,
-        "max_temp_c": 40,
-        "min_temp_c": 15,
-        "max_wind_kmph": 50,
-        "max_humidity": 92
-    }
+    "rice": {"min_rain_mm": 5, "max_temp_c": 38, "min_temp_c": 20, "max_wind_kmph": 40, "max_humidity": 90},
+    "wheat": {"min_rain_mm": 2, "max_temp_c": 32, "min_temp_c": 10, "max_wind_kmph": 35, "max_humidity": 85},
+    "maize": {"min_rain_mm": 3, "max_temp_c": 35, "min_temp_c": 18, "max_wind_kmph": 45, "max_humidity": 88},
+    "sugarcane": {"min_rain_mm": 4, "max_temp_c": 40, "min_temp_c": 15, "max_wind_kmph": 50, "max_humidity": 92}
 }
-
-# === RECOMMENDATION MAPPINGS ===
 RISK_RECOMMENDATIONS = {
     "drought": "Irrigate early morning or late evening to reduce evaporation.",
     "flood": "Ensure proper drainage; avoid nitrogen fertilizer applications.",
@@ -81,8 +57,6 @@ RISK_RECOMMENDATIONS = {
     "wind": "Support tall crops like sugarcane; install wind barriers.",
     "humidity": "Inspect crops for fungal symptoms; apply fungicide if needed."
 }
-
-# === Request & Response Schemas ===
 
 class UserInput(BaseModel):
     pin_code: str
@@ -94,123 +68,71 @@ def read_root():
 
 @app.post("/analyze")
 def analyze(input: UserInput):
-    # Set up Application Insights tracing
-    
-    os.environ["APPLICATION_INSIGHTS_CONNECTION_STRING"] = APP_INSIGHTS_KEY
-    exporter = AzureMonitorTraceExporter(connection_string=os.getenv("APPLICATION_INSIGHTS_CONNECTION_STRING"))
-    provider = TracerProvider()
-    processor = BatchSpanProcessor(exporter)
-    provider.add_span_processor(processor)
-    trace.set_tracer_provider(provider)
-    tracer = trace.get_tracer(__name__)
-
     try:
         with tracer.start_as_current_span("analyze_weather_risks"):
-            # Step 1: Convert PIN to lat/lon using Nominatim
+            # Step 1: Get lat/lon from pincode
             geo_url = f"https://nominatim.openstreetmap.org/search?postalcode={input.pin_code}&country=India&format=json"
-            headers = {
-                "User-Agent": "FarmerCopilotApp/1.0",
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type, Authorization"
-            }
-            geo_response = requests.get(geo_url, headers=headers).json()
-
+            geo_response = requests.get(geo_url, headers={"User-Agent": "FarmerCopilotApp/1.0"}).json()
             if not geo_response:
                 return JSONResponse(status_code=400, content={"error": "Invalid PIN code or location not found."})
+            lat, lon = geo_response[0]["lat"], geo_response[0]["lon"]
 
-            lat = geo_response[0]["lat"]
-            lon = geo_response[0]["lon"]
-
-            # Step 2: Get 7-day forecast from WeatherAPI
+            # Step 2: Get weather forecast
             weather_url = f"https://api.weatherapi.com/v1/forecast.json?key={WEATHER_API_KEY}&q={lat},{lon}&days=7"
             weather_response = requests.get(weather_url).json()
             forecast_days = weather_response.get("forecast", {}).get("forecastday", [])
-
             if not forecast_days:
                 return JSONResponse(status_code=502, content={"error": "Failed to fetch weather forecast."})
 
-            # Step 3: Load crop profile
+            # Step 3: Analyze
             profile = CROP_RISK_PROFILES.get(input.crop_name.lower())
             if not profile:
-                return JSONResponse(status_code=400, content={"error": f"Crop '{input.crop_name}' is not supported."})
+                return JSONResponse(status_code=400, content={"error": f"Crop '{input.crop_name}' not supported."})
 
-            detected_risks = []
-            recommendations = []
+            detected_risks, recommendations = [], []
 
-            # Step 4: Analyze each forecast day
             for day in forecast_days:
-                date = day["date"]
-                weather = day["day"]
+                date, weather = day["date"], day["day"]
+                rain, temp_max, temp_min = weather.get("totalprecip_mm", 0), weather.get("maxtemp_c", 0), weather.get("mintemp_c", 0)
+                wind, humidity = weather.get("maxwind_kph", 0), weather.get("avghumidity", 0)
 
-                rain = weather.get("totalprecip_mm", 0)
-                temp_max = weather.get("maxtemp_c", 0)
-                temp_min = weather.get("mintemp_c", 0)
-                wind = weather.get("maxwind_kph", 0)
-                humidity = weather.get("avghumidity", 0)
-
-                # Drought
                 if rain < profile["min_rain_mm"]:
                     detected_risks.append(f"Drought risk on {date}")
-                    endpoint = "https://chat-with-db.openai.azure.com/"
-                    model_name = "gpt-4.1" 
-                    deployment = "gpt-4.1"
-
-                    subscription_key = OPENAI_SUB_API_KEY
-                    api_version = "2024-12-01-preview"
-
                     client = AzureOpenAI(
-                        api_version=api_version,
-                        azure_endpoint=endpoint,
-                        api_key=subscription_key,
+                        api_version="2024-12-01-preview",
+                        azure_endpoint="https://chat-with-db.openai.azure.com/",
+                        api_key=OPENAI_SUB_API_KEY,
                     )
-
                     response = client.chat.completions.create(
                         messages=[
-                            {
-                                "role": "system",
-                                "content": "You are a farmer and weather assistant.",
-                            },
-                            {
-                                "role": "user",
-                                "content": f"Given the pin code {input.pin_code} and crop name {input.crop_name}, provide risk recommendations based on weather conditions such as drought, flood, heat, cold, wind, and humidity."
-                            }
+                            {"role": "system", "content": "You are a farmer and weather assistant."},
+                            {"role": "user", "content": f"Given PIN {input.pin_code} and crop {input.crop_name}, what should a farmer do in case of drought, flood, heat, cold, wind, or humidity?"}
                         ],
                         max_completion_tokens=800,
                         temperature=1.0,
                         top_p=1.0,
                         frequency_penalty=0.0,
                         presence_penalty=0.0,
-                        model=deployment
+                        model="gpt-4.1"
                     )
                     recommendations.append(response.choices[0].message.content)
 
-                # Flood
                 if rain > 80:
                     detected_risks.append(f"Flood risk on {date}")
                     recommendations.append(RISK_RECOMMENDATIONS["flood"])
-
-                # Heat stress
                 if temp_max > profile["max_temp_c"]:
                     detected_risks.append(f"Heat stress on {date}")
                     recommendations.append(RISK_RECOMMENDATIONS["heat"])
-
-                # Cold/frost
                 if temp_min < profile["min_temp_c"]:
                     detected_risks.append(f"Cold/frost risk on {date}")
                     recommendations.append(RISK_RECOMMENDATIONS["cold"])
-
-                # Wind
                 if wind > profile["max_wind_kmph"]:
                     detected_risks.append(f"Wind damage risk on {date}")
                     recommendations.append(RISK_RECOMMENDATIONS["wind"])
-
-                # Pest/Disease
                 if humidity > profile["max_humidity"] and temp_max > 30:
                     detected_risks.append(f"Pest/disease risk on {date}")
                     recommendations.append(RISK_RECOMMENDATIONS["humidity"])
 
-            # Step 5: Forecast summary for today
             today = forecast_days[0]
             summary = f"{today['date']}: {today['day']['condition']['text']}, Max Temp: {today['day']['maxtemp_c']}°C"
 
