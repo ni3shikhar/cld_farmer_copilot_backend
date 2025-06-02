@@ -3,3 +3,4 @@ uvicorn
 requests
 azure-identity 
 azure-keyvault-secrets
+openai

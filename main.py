@@ -27,6 +27,9 @@ client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
 retrieved_secret = client.get_secret("OpenWeatherAPIKey")
 WEATHER_API_KEY = retrieved_secret.value
 
+retrieved_openai_secret = client.get_secret("OpenSubscriptionKey")
+OPENAI_SUB_API_KEY = retrieved_openai_secret.value
+
 # Replace with your actual API key
 #OPENWEATHER_API_KEY = "99e6a7cc36fdd82d597fe353e74771f1"
 
@@ -127,25 +130,40 @@ def analyze(input: UserInput):
             if rain < profile["min_rain_mm"]:
                 detected_risks.append(f"Drought risk on {date}")
                 #recommendations.append(RISK_RECOMMENDATIONS["drought"])
-                # Generate additional recommendations using Azure OpenAI API
-                #openai_url = "https://<your-openai-endpoint>/openai/deployments/<deployment-name>/completions"
-                openai_url = "https://chat-with-db.openai.azure.com/openai/deployments/gpt-4.1/chat/completions?api-version=2025-01-01-preview"
-                openai_headers = {
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {credential.get_token('https://cognitiveservices.azure.com/.default').token}"
-                }
-                openai_payload = {
-                    "prompt": f"Based on the crop '{input.crop_name}' and risks detected ({', '.join(detected_risks)}), provide additional recommendations for farmers in the region with PIN code {input.pin_code}.",
-                    "max_tokens": 100,
-                    "temperature": 0.7
-                }
 
-                openai_response = requests.post(openai_url, headers=openai_headers, json=openai_payload)
-                if openai_response.status_code == 200:
-                    openai_data = openai_response.json()
-                    if "choices" in openai_data and len(openai_data["choices"]) > 0:
-                        ai_recommendation = openai_data["choices"][0]["text"].strip()
-                        recommendations.append(ai_recommendation)
+                endpoint = "https://chat-with-db.openai.azure.com/"
+                model_name = "gpt-4.1" 
+                deployment = "gpt-4.1"
+
+                subscription_key = OPENAI_SUB_API_KEY
+                api_version = "2024-12-01-preview"
+
+                client = AzureOpenAI(
+                    api_version=api_version,
+                    azure_endpoint=endpoint,
+                    api_key=subscription_key,
+                )
+
+                response = client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a farmer and weather assistant.",
+                    },
+                    {
+                        "role": "user",
+                            "content": f"Given the pin code {input.pin_code} and crop name {input.crop_name}, provide risk recommendations based on weather conditions such as drought, flood, heat, cold, wind, and humidity."
+                    }
+                ],
+                max_completion_tokens=800,
+                temperature=1.0,
+                top_p=1.0,
+                frequency_penalty=0.0,
+                presence_penalty=0.0,
+                model=deployment
+            )
+            recommendations.append(response.choices[0].message.content)
+            #print(response.choices[0].message.content)
 
             # Flood
             if rain > 80:
