@@ -126,7 +126,26 @@ def analyze(input: UserInput):
             # Drought
             if rain < profile["min_rain_mm"]:
                 detected_risks.append(f"Drought risk on {date}")
-                recommendations.append(RISK_RECOMMENDATIONS["drought"])
+                #recommendations.append(RISK_RECOMMENDATIONS["drought"])
+                # Generate additional recommendations using Azure OpenAI API
+                #openai_url = "https://<your-openai-endpoint>/openai/deployments/<deployment-name>/completions"
+                openai_url = "https://chat-with-db.openai.azure.com/openai/deployments/gpt-4.1/chat/completions?api-version=2025-01-01-preview"
+                openai_headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {credential.get_token('https://cognitiveservices.azure.com/.default').token}"
+                }
+                openai_payload = {
+                    "prompt": f"Based on the crop '{input.crop_name}' and risks detected ({', '.join(detected_risks)}), provide additional recommendations for farmers in the region with PIN code {input.pin_code}.",
+                    "max_tokens": 100,
+                    "temperature": 0.7
+                }
+
+                openai_response = requests.post(openai_url, headers=openai_headers, json=openai_payload)
+                if openai_response.status_code == 200:
+                    openai_data = openai_response.json()
+                    if "choices" in openai_data and len(openai_data["choices"]) > 0:
+                        ai_recommendation = openai_data["choices"][0]["text"].strip()
+                        recommendations.append(ai_recommendation)
 
             # Flood
             if rain > 80:
