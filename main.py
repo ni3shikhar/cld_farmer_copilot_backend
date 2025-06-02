@@ -34,6 +34,9 @@ WEATHER_API_KEY = retrieved_secret.value
 retrieved_openai_secret = client.get_secret("OpenSubscriptionKey")
 OPENAI_SUB_API_KEY = retrieved_openai_secret.value
 
+retrieved_insights_secret = client.get_secret("ApplicationInsightsConnectionString")
+APP_INSIGHTS_KEY = retrieved_insights_secret.vaue
+
 # Replace with your actual API key
 #OPENWEATHER_API_KEY = "99e6a7cc36fdd82d597fe353e74771f1"
 
@@ -92,8 +95,8 @@ def read_root():
 @app.post("/analyze")
 def analyze(input: UserInput):
     # Set up Application Insights tracing
-    retrieved_insights_secret = client.get_secret("ApplicationInsightsConnectionString")
-    os.environ["APPLICATION_INSIGHTS_CONNECTION_STRING"] = retrieved_insights_secret.value
+    
+    os.environ["APPLICATION_INSIGHTS_CONNECTION_STRING"] = APP_INSIGHTS_KEY
     exporter = AzureMonitorTraceExporter(connection_string=os.getenv("APPLICATION_INSIGHTS_CONNECTION_STRING"))
     provider = TracerProvider()
     processor = BatchSpanProcessor(exporter)
