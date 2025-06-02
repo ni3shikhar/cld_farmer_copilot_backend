@@ -108,7 +108,12 @@ def analyze(input: UserInput):
         with tracer.start_as_current_span("analyze_weather_risks"):
             # Step 1: Convert PIN to lat/lon using Nominatim
             geo_url = f"https://nominatim.openstreetmap.org/search?postalcode={input.pin_code}&country=India&format=json"
-            headers = {"User-Agent": "FarmerCopilotApp/1.0"}
+            headers = {
+                "User-Agent": "FarmerCopilotApp/1.0",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type, Authorization"
+            }
             geo_response = requests.get(geo_url, headers=headers).json()
 
             if not geo_response:
