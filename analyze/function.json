@@ -1,6 +1,7 @@
 {
     "bindings": [
       {
+        "scriptFile": "__init__.py",
         "authLevel": "anonymous",
         "type": "httpTrigger",
         "direction": "in",
