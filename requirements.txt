@@ -1,6 +1,10 @@
 fastapi
-uvicorn
-requests
-azure-identity 
+azure-functions
+azure-identity
 azure-keyvault-secrets
-openai
+requests
+openai  # or azure-openai if you use that
+opentelemetry-sdk
+azure-monitor-opentelemetry-exporter
+opentelemetry-instrumentation
+opentelemetry-exporter-otlp
