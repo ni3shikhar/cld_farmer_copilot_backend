@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
-from azure.identity import DefaultAzureCredential
+from azure.identity import ManagedIdentityCredential
 from azure.keyvault.secrets import SecretClient
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,7 +17,9 @@ from openai import AzureOpenAI  # adjust this import if you're using a specific 
 
 # Set environment variable early for Application Insights
 KEY_VAULT_URL = "https://kv-cld-farmer-poc.vault.azure.net/"
-credential = DefaultAzureCredential()
+#credential = DefaultAzureCredential()
+#credential = DefaultAzureCredential(additionally_allowed_tenants=["*"])
+credential = ManagedIdentityCredential()
 client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
 
 WEATHER_API_KEY = client.get_secret("OpenWeatherAPIKey").value
